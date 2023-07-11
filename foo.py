@@ -3,6 +3,7 @@ import json
 import uuid
 import os
 import random
+from datetime import datetime
 from PySide2 import QtCore, QtWidgets, QtGui
 from PySide2.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QLabel, QStackedWidget, QFormLayout, QLineEdit, QLineEdit
 from functools import partial
@@ -82,7 +83,7 @@ class StandupCreateView(QtWidgets.QWidget):
             if self._chosenPeople[id] == True:
                 people.append(self.repo.findById(id))
 
-        return Standup(people=people, winner=random.choice(people))
+        return Standup(id = str(uuid.uuid4()), people=people, winner=random.choice(people), createdAt=datetime.now())
 
 class PeopleIndexView(QtWidgets.QWidget):
     def __init__(self, peopleRepo):
@@ -199,9 +200,9 @@ class EditPersonView(QtWidgets.QWidget):
         self.nameLineEdit.setText(self.person.name)
 
 class StandupShowView(QtWidgets.QWidget):
-    def __init__(self, peopleRepo):
+    def __init__(self, standupRepo):
         super().__init__()
-        self.repo = peopleRepo
+        self.standupRepo = standupRepo
         self.layout = QFormLayout()
         self.winnerLabel = QLabel()
         self.layout.addRow(self.winnerLabel)
@@ -212,6 +213,7 @@ class StandupShowView(QtWidgets.QWidget):
 
     def show(self, standup):
         self.winnerLabel.setText(standup.winner.name)
+        self.standupRepo.create(standup)
     
     def goBack(self):
         masterLayout.showStandupCreateView()
@@ -225,8 +227,10 @@ class Person:
 
 @dataclass
 class Standup:
+    id: str
     people: List[Person]
     winner: Person
+    createdAt: datetime
 
 class PeopleRepository():
     def __init__(self, jsonFile):
@@ -245,7 +249,7 @@ class PeopleRepository():
             if person.id == id:
                 return person
             
-        raise(f"Didn't find Person with ID: {id}")
+        raise RuntimeError(f"Didn't find Person with ID: {id}")
 
     def deleteById(self, id):
         allPeople = self.getAll()
@@ -255,7 +259,7 @@ class PeopleRepository():
                 self._saveToFile(allPeople)
                 return
 
-        raise(f"Didn't find Person with ID: {id}")
+        raise RuntimeError(f"Didn't find Person with ID: {id}")
 
     def create(self, person):
         allPeople = self.getAll()
@@ -271,12 +275,52 @@ class PeopleRepository():
                 self._saveToFile(allPeople)
                 return
         
-        raise(f"Didn't find Person with ID: {editedPerson.id}")
+        raise RuntimeError(f"Didn't find Person with ID: {editedPerson.id}")
 
     def _saveToFile(self, people):
         with open(self.jsonFile, "w") as outfile:
             peopleDicts = [asdict(person) for person in people]
             outfile.write(json.dumps(peopleDicts))
+    
+class StandupRepository():
+    def __init__(self, jsonFile, peopleRepo):
+        self.jsonFile = jsonFile
+        self.peopleRepo = peopleRepo
+
+    def getAll(self):
+        standups = []
+        for standupData in json.load(open(self.jsonFile)):
+
+            people = []
+            for personId in standupData["peopleIds"]:
+                people.append(self.peopleRepo.findById(personId))
+
+            standups.append(
+                Standup(
+                    id=standupData["id"],
+                    people = people,
+                    winner = self.peopleRepo.findById(standupData["winnerId"]),
+                    createdAt = datetime.fromisoformat(standupData["createdAt"])))
+
+        return standups
+
+    def create(self, standup):
+        allStandups = self.getAll()
+        allStandups.append(standup)
+        self._saveToFile(allStandups)
+
+    def _saveToFile(self, standups):
+        with open(self.jsonFile, "w") as outfile:
+            standupDicts = [self._serializableStandup(standup) for standup in standups]
+            outfile.write(json.dumps(standupDicts))
+
+    def _serializableStandup(self, standup):
+        return { 
+            "id": standup.id,
+            "peopleIds": [person.id for person in standup.people],
+            "winnerId": standup.winner.id,
+            "createdAt": standup.createdAt.isoformat()
+        }
     
 class MasterLayout(QStackedWidget):
     def __init__(self, standupCreateView, peopleIndexView, newPersonView, editPersonView, standupShowView):
@@ -317,12 +361,13 @@ if __name__ == "__main__":
     app = QtWidgets.QApplication([])
 
     peopleRepo = PeopleRepository("people.json")
+    standupRepo = StandupRepository("standups.json", peopleRepo)
     masterLayout = MasterLayout(
         standupCreateView=StandupCreateView(peopleRepo),
         peopleIndexView=PeopleIndexView(peopleRepo),
         newPersonView=NewPersonView(peopleRepo),
         editPersonView=EditPersonView(peopleRepo),
-        standupShowView=StandupShowView(peopleRepo)
+        standupShowView=StandupShowView(standupRepo)
     )
     
     masterLayout.show()
@@ -346,7 +391,13 @@ if __name__ == "__main__":
 # make enter submit form
 
 ## NEXT ITEMS ##
-# store standups
-# initiate a celebration upon win
 # Set viewport to correct size for pi
 # investigate how to style layouts
+# unit test repos
+# investigate user testing on views
+# investigate sqlite
+# change standup show to an animation
+# after stand up show go to stats page
+## stats page 1: last 5 winners
+## stats page 2: most wins ever
+## stats page 3: most wins in a row ever
